@@ -53,6 +53,11 @@ Item {
     clientId: ""
   })
   property var settings: Api.shallowCopy(defaultSettingValues)
+  // False until the first syncSettings() has read the real config (settings
+  // starts out defaulted to an empty clientId above). Gates AuthManager so
+  // that first async load-in of a saved personal client ID isn't treated as
+  // the user switching Spotify apps mid-session.
+  property bool settingsReady: false
 
   readonly property string deviceName: String(settings.deviceName || "Omarchy Spotify").trim() || "Omarchy Spotify"
   readonly property int idleShutdownMinutes: Math.max(0, Math.min(1440,
@@ -648,10 +653,15 @@ Item {
   }
 
   function configuredEntry() {
-    var config = shell && shell.shellConfig ? shell.shellConfig : null
+    // Third-party plugins get a restricted shell API without shellConfig, so
+    // fall back to its barConfig, which still carries this widget's settings.
+    var config = shell && shell.shellConfig ? shell.shellConfig
+      : (shell && shell.barConfig ? { bar: shell.barConfig } : null)
     if (!config) return null
     var layout = config.bar && config.bar.layout ? config.bar.layout : null
-    var sections = ["left", "center", "right"]
+    // Omarchy 4.5 added centerBegin/centerEnd to the bar layout, so search
+    // every section rather than a fixed list.
+    var sections = layout ? Object.keys(layout) : []
     if (layout) {
       for (var s = 0; s < sections.length; s++) {
         var rows = Array.isArray(layout[sections[s]]) ? layout[sections[s]] : []
@@ -667,6 +677,7 @@ Item {
 
   function syncSettings() {
     applySettings(configuredEntry() || {})
+    if (shell && shell.shellConfig) settingsReady = true
     reconcileSessionPersistence()
     resumeLyricsInstallIntent()
   }
@@ -3766,6 +3777,7 @@ Item {
     target: root.shell
     ignoreUnknownSignals: true
     function onShellConfigChanged() { root.syncSettings() }
+    function onBarConfigChanged() { root.syncSettings() }
   }
 
   Connections {
@@ -4140,6 +4152,7 @@ Item {
     id: authManager
     pluginDir: root.pluginDir
     customClientId: settings.clientId
+    settingsReady: root.settingsReady
   }
 
   AuthManager {
