@@ -144,6 +144,40 @@ still match that tagged source. If verification is unavailable, setup builds
 the locked Rust source locally or offers Omarchy's packaged `spotifyd` fallback
 instead of executing an unverified download.
 
+## Songs will not play on this computer?
+
+If a track fails with **"Spotify did not provide the audio key"**, Spotify is
+refusing the built-in open-source player for your account. This affects every
+librespot-based player and cannot be fixed inside the plugin
+([librespot#1649](https://github.com/librespot-org/librespot/issues/1649)).
+Controlling your phone, a speaker, or the Spotify desktop app from the plugin
+keeps working.
+
+To play on this computer, use **Spotify Soloist**, Spotify's own headless
+player, as the plugin's playback device:
+
+1. Create a Soloist API key at
+   <https://developer.spotify.com/dashboard/soloist> (needs Premium).
+2. Run the setup and paste the key when asked. It is stored with owner-only
+   permissions in `~/.config/omarchy-spotify/soloist-api-key`.
+
+   ```bash
+   ~/.config/omarchy/plugins/quickshell.spotify/scripts/setup-soloist.sh --download --pair
+   ```
+
+3. When it waits for pairing, pick this computer once from the device list of
+   a Spotify app on the same network.
+
+The plugin then starts Soloist on demand instead of its own backend, under the
+device name from Settings. Soloist is proprietary and may not be
+redistributed, so the plugin never ships it: `--download` fetches it from
+Spotify's server, or pass a build you downloaded yourself with
+`--archive FILE`. Builds expire after 90 days; run the setup again with
+`--download` to replace one. Audio quality and the plugin's direct control
+socket do not apply to Soloist, so playback is driven through the Spotify Web
+API. Soloist receives the key as a command-line argument, which other programs
+running as your user can read while it runs.
+
 ## Seeing "Spotify is busy." or slow searches?
 
 The plugin's Spotify Web API client ID is shared by every install worldwide,

@@ -536,4 +536,141 @@ grep -qx 'Environment=PULSE_LATENCY_MSEC=30' \
 grep -qx 'Environment=TOKIO_WORKER_THREADS=2' \
   "$source_root/systemd/omarchy-spotify.service"
 
+# Spotify Soloist runtime: the official headless client replaces the built-in
+# backend when the user sets it up. Everything runs against a stub executable
+# inside the temporary tree; nothing is downloaded and no real key is used.
+soloist_config="$test_root/soloist-config"
+soloist_state="$test_root/soloist-state"
+soloist_cache="$test_root/soloist-cache"
+soloist_runtime="$test_root/soloist-lib/omarchy-spotify"
+soloist_fixture="$test_root/soloist-fixture"
+soloist_log="$test_root/soloist.log"
+soloist_key='test-soloist-key-0123456789'
+mkdir -p "$soloist_config" "$soloist_state" "$soloist_cache" \
+  "$soloist_fixture/soloist_release"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'if [ "${1:-}" = "--version" ]; then' \
+  '  [ "${TEST_SOLOIST_EXPIRED:-0}" = 1 ] && exit 10' \
+  '  echo "soloist 9.9.9 (test stub)"; exit 0' \
+  'fi' \
+  'for argument in "$@"; do printf "%s\n" "$argument"; done >"${TEST_SOLOIST_LOG:?}"' \
+  >"$soloist_fixture/soloist_release/soloist"
+chmod 755 "$soloist_fixture/soloist_release/soloist"
+tar -czf "$soloist_fixture/soloist.tar.gz" -C "$soloist_fixture" soloist_release
+
+run_soloist_script() {
+  PATH="$mock_bin:$PATH" \
+  XDG_CONFIG_HOME="$soloist_config" \
+  XDG_STATE_HOME="$soloist_state" \
+  XDG_CACHE_HOME="$soloist_cache" \
+  OMARCHY_SPOTIFY_RUNTIME_DIR="$soloist_runtime" \
+  TEST_SOLOIST_LOG="$soloist_log" \
+    "$@"
+}
+
+# Without a key nothing is installed as a runtime, and no unit is preferred
+# over the existing ones.
+set +e
+run_soloist_script "$source_root/scripts/setup-soloist.sh" \
+  --archive "$soloist_fixture/soloist.tar.gz" </dev/null >/dev/null 2>&1
+soloist_missing_key_status=$?
+set -e
+[[ $soloist_missing_key_status -eq 3 ]]
+[[ ! -e $soloist_config/omarchy-spotify/soloist-api-key ]]
+[[ ! -e $soloist_config/systemd/user/omarchy-spotify-soloist.service ]]
+
+soloist_setup_output=$(printf '%s\n' "  $soloist_key  " \
+  | run_soloist_script "$source_root/scripts/setup-soloist.sh" \
+      --archive "$soloist_fixture/soloist.tar.gz" 2>&1)
+if grep -qF -- "$soloist_key" <<<"$soloist_setup_output"; then
+  echo "setup-soloist.sh printed the API key" >&2
+  exit 1
+fi
+[[ $(<"$soloist_config/omarchy-spotify/soloist-api-key") == "$soloist_key" ]]
+[[ $(stat -c '%a' "$soloist_config/omarchy-spotify/soloist-api-key") == 600 ]]
+[[ -x $soloist_runtime/soloist/soloist && -x $soloist_runtime/run-soloist.sh ]]
+cmp -s -- "$source_root/systemd/omarchy-spotify-soloist.service" \
+  "$soloist_config/systemd/user/omarchy-spotify-soloist.service"
+
+# A configured Soloist wins over the other runtimes and needs no separate
+# playback authorization.
+[[ $(run_soloist_script "$source_root/scripts/playback-runtime.sh" unit) \
+  == omarchy-spotify-soloist.service ]]
+run_soloist_script "$source_root/scripts/playback-runtime.sh" check
+run_soloist_script "$source_root/scripts/playback-runtime.sh" credentials
+
+# A second run keeps the stored key unless asked to replace it.
+run_soloist_script "$source_root/scripts/setup-soloist.sh" </dev/null >/dev/null
+[[ $(<"$soloist_config/omarchy-spotify/soloist-api-key") == "$soloist_key" ]]
+
+# The launcher passes the plugin's device name, the key and private
+# directories to Soloist.
+printf '%s\n%s\n' 'Desk Speaker' '320' \
+  | XDG_CONFIG_HOME="$soloist_config" "$source_root/scripts/configure-spotifyd.sh"
+run_soloist_script "$soloist_runtime/run-soloist.sh"
+[[ $(sed -n '1,4p' "$soloist_log" | tr '\n' '|') \
+  == "--device-name|Desk Speaker|--api-key|$soloist_key|" ]]
+grep -qxF -- "$soloist_state/omarchy-spotify/soloist" "$soloist_log"
+grep -qxF -- "$soloist_cache/omarchy-spotify/soloist" "$soloist_log"
+[[ $(stat -c '%a' "$soloist_state/omarchy-spotify/soloist") == 700 ]]
+
+# An expired build is reported with Soloist's own exit code, and the plugin
+# turns the unit's exit status into a specific failure.
+set +e
+TEST_SOLOIST_EXPIRED=1 run_soloist_script \
+  "$source_root/scripts/setup-soloist.sh" </dev/null >/dev/null 2>&1
+soloist_expired_status=$?
+set -e
+[[ $soloist_expired_status -eq 10 ]]
+soloist_mock_bin="$test_root/soloist-mock-bin"
+mkdir -p "$soloist_mock_bin"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'case "$*" in' \
+  '  *"-p ExecMainStatus"*) echo 10 ;;' \
+  '  *"-p Result"*) echo exit-code ;;' \
+  'esac' \
+  'exit 0' >"$soloist_mock_bin/systemctl"
+chmod 755 "$soloist_mock_bin/systemctl"
+[[ $(PATH="$soloist_mock_bin:$PATH" \
+    XDG_CONFIG_HOME="$soloist_config" \
+    OMARCHY_SPOTIFY_RUNTIME_DIR="$soloist_runtime" \
+    "$source_root/scripts/playback-runtime.sh" failure) == soloist_expired ]]
+
+# Archives that would write outside the extraction directory are refused.
+python3 - "$soloist_fixture/unsafe.tar.gz" <<'PYTHON'
+import io, sys, tarfile
+with tarfile.open(sys.argv[1], "w:gz") as archive:
+    member = tarfile.TarInfo("../soloist")
+    payload = b"#!/bin/sh\n"
+    member.size = len(payload)
+    archive.addfile(member, io.BytesIO(payload))
+PYTHON
+set +e
+run_soloist_script "$source_root/scripts/setup-soloist.sh" \
+  --archive "$soloist_fixture/unsafe.tar.gz" </dev/null >/dev/null 2>&1
+soloist_unsafe_status=$?
+set -e
+[[ $soloist_unsafe_status -eq 1 ]]
+
+# Without the key the launcher stops with a configuration error, and removal
+# takes the unit, launcher and executable with it.
+rm -f -- "$soloist_config/omarchy-spotify/soloist-api-key"
+set +e
+run_soloist_script "$soloist_runtime/run-soloist.sh" >/dev/null 2>&1
+soloist_no_key_status=$?
+set -e
+[[ $soloist_no_key_status -eq 78 ]]
+[[ $(run_soloist_script "$source_root/scripts/playback-runtime.sh" unit) \
+  != omarchy-spotify-soloist.service ]]
+XDG_RUNTIME_DIR="$runtime_session" run_soloist_script \
+  "$source_root/scripts/remove-runtime.sh" >/dev/null
+[[ ! -e $soloist_config/systemd/user/omarchy-spotify-soloist.service ]]
+[[ ! -e $soloist_runtime/run-soloist.sh && ! -e $soloist_runtime/soloist ]]
+grep -qx 'Conflicts=omarchy-spotify.service omarchy-spotifyd.service' \
+  "$source_root/systemd/omarchy-spotify-soloist.service"
+grep -qx 'RestartPreventExitStatus=10 78' \
+  "$source_root/systemd/omarchy-spotify-soloist.service"
+
 echo "Script tests passed."

@@ -5,8 +5,9 @@ import Quickshell.Io
 import "Api.js" as Api
 
 // Owns only short-lived runtime/authentication commands. The plugin backend
-// (or its spotifyd fallback) is supervised by a user unit and is never launched
-// as an untracked child of the shell.
+// (or its spotifyd fallback, or Spotify's official Soloist client) is
+// supervised by a user unit and is never launched as an untracked child of
+// the shell.
 Item {
   id: root
 
@@ -25,7 +26,12 @@ Item {
   property bool binaryChecked: false
   property bool unitAvailable: false
   property bool unitChecked: false
+  // True for every runtime without the plugin's own control socket: playback
+  // is then driven through the Spotify Web API.
   property bool usingFallbackRuntime: false
+  // Spotify Soloist was set up deliberately with scripts/setup-soloist.sh, so
+  // it must not be replaced by an automatic build of the plugin backend.
+  property bool usingSoloistRuntime: false
   property bool automaticSetupAttempted: false
   property bool credentialsAvailable: false
   property bool credentialsChecked: false
@@ -87,7 +93,7 @@ Item {
   function installPlaybackBackendIfNeeded() {
     if (automaticSetupAttempted || setupBusy || !pluginDir
         || !requirementsChecked) return
-    if (playbackReady && !usingFallbackRuntime) return
+    if (playbackReady && (!usingFallbackRuntime || usingSoloistRuntime)) return
     automaticSetupAttempted = true
     setupPlayback()
   }
@@ -294,8 +300,10 @@ Item {
       root.unitAvailable = exitCode === 0
       root.unitChecked = true
       if (unit) root.unitName = unit
+      root.usingSoloistRuntime = exitCode === 0
+        && unit === "omarchy-spotify-soloist.service"
       root.usingFallbackRuntime = exitCode === 0
-        && unit === "omarchy-spotifyd.service"
+        && (unit === "omarchy-spotifyd.service" || root.usingSoloistRuntime)
       if (exitCode === 0) root.requestConfiguration()
       root.installPlaybackBackendIfNeeded()
     }
@@ -360,6 +368,7 @@ Item {
         invalid_configuration: "Playback configuration is invalid. Review Settings, then start this computer again.",
         missing_credentials: "Authorize playback on this computer in Settings.",
         reconnect_exhausted: "Playback lost its connection repeatedly. Check the network, then start this computer again.",
+        soloist_expired: "This Spotify Soloist build has expired. Run scripts/setup-soloist.sh --download, then start this computer again.",
         restart_limit: "Playback stopped after repeated failures. Check your network, Premium account and playback authorization, then start this computer again."
       }
       if (messages[code]) {

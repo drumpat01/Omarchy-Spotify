@@ -1,0 +1,22 @@
+[Unit]
+Description=Omarchy Spotify plugin playback through Spotify Soloist
+Documentation=https://developer.spotify.com/documentation/soloist
+After=graphical-session.target sound.target
+Wants=sound.target
+Conflicts=omarchy-spotify.service omarchy-spotifyd.service
+
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=%h/.local/lib/omarchy-spotify/run-soloist.sh
+Restart=on-failure
+RestartSec=5
+# 10: the Soloist build expired. 78: the API key, device name or executable
+# is missing. Restarting cannot fix either one.
+RestartPreventExitStatus=10 78
+TimeoutStopSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

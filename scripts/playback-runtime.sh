@@ -14,11 +14,14 @@ backend_source_id_file="$runtime_dir/backend-source.sha256"
 backend_binary_hash_file="$runtime_dir/backend-binary.sha256"
 backend_unit=omarchy-spotify.service
 fallback_unit=omarchy-spotifyd.service
+soloist_unit=omarchy-spotify-soloist.service
 config_root=${XDG_CONFIG_HOME:-"$HOME/.config"}
 installed_backend_unit="$config_root/systemd/user/omarchy-spotify.service"
 source_backend_unit="$source_root/systemd/omarchy-spotify.service"
 state_root=${XDG_STATE_HOME:-"$HOME/.local/state"}
 cache_root=${XDG_CACHE_HOME:-"$HOME/.cache"}
+soloist_key_file="$config_root/omarchy-spotify/soloist-api-key"
+soloist_launcher="$runtime_dir/run-soloist.sh"
 
 unit_exists() {
   systemctl --user cat "$1" >/dev/null 2>&1
@@ -42,8 +45,20 @@ backend_install_is_current() {
       && cmp -s -- "$source_backend_unit" "$installed_backend_unit"; }
 }
 
+# Spotify Soloist is Spotify's official headless client. Setting it up is an
+# explicit user choice (scripts/setup-soloist.sh), so it wins over the other
+# runtimes whenever its executable, API key, launcher and unit are all present.
+soloist_is_ready() {
+  [[ -x $runtime_dir/soloist/soloist ]] || command -v soloist >/dev/null 2>&1 \
+    || return 1
+  [[ -s $soloist_key_file && -x $soloist_launcher ]] || return 1
+  unit_exists "$soloist_unit"
+}
+
 preferred_unit() {
-  if backend_install_is_current && unit_exists "$backend_unit"; then
+  if soloist_is_ready; then
+    printf '%s\n' "$soloist_unit"
+  elif backend_install_is_current && unit_exists "$backend_unit"; then
     printf '%s\n' "$backend_unit"
   elif command -v spotifyd >/dev/null 2>&1 && unit_exists "$fallback_unit"; then
     printf '%s\n' "$fallback_unit"
@@ -57,6 +72,10 @@ case $action in
     preferred_unit >/dev/null
     ;;
   credentials)
+    # Soloist signs in with the stored API key and keeps its own session.
+    if soloist_is_ready; then
+      exit 0
+    fi
     credential_paths=(
       "$state_root/omarchy-spotify/oauth/credentials.json"
       "$state_root/omarchy-spotify/zeroconf/credentials.json"
@@ -89,6 +108,7 @@ case $action in
   stop)
     systemctl --user stop "$backend_unit" 2>/dev/null || true
     systemctl --user stop "$fallback_unit" 2>/dev/null || true
+    systemctl --user stop "$soloist_unit" 2>/dev/null || true
     ;;
   status)
     unit=$(preferred_unit) || exit 1
@@ -98,6 +118,12 @@ case $action in
     unit=$(preferred_unit) || exit 1
     if [[ $(systemctl --user show "$unit" -p Result --value) == start-limit-hit ]]; then
       echo restart_limit
+    elif [[ $unit == "$soloist_unit" \
+        && $(systemctl --user show "$unit" -p ExecMainStatus --value) == 10 ]]; then
+      echo soloist_expired
+    elif [[ $unit == "$soloist_unit" \
+        && $(systemctl --user show "$unit" -p ExecMainStatus --value) == 78 ]]; then
+      echo invalid_configuration
     else
       jq -r '.code // ""' "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omarchy-spotify/startup-error.json" 2>/dev/null || true
     fi

@@ -2,6 +2,15 @@
 
 ## 1.0.4 (unreleased)
 
+- Add Spotify Soloist, Spotify's official headless player, as an optional
+  playback runtime for accounts whose audio keys Spotify refuses to the
+  built-in backend. `scripts/setup-soloist.sh` installs it from Spotify's
+  server or a downloaded archive, stores the API key privately, and the plugin
+  prefers it once set up. Expired builds and missing keys are reported, and
+  the audio key error now points to this setup.
+- Read widget settings from every bar section and from `barConfig`, and stop
+  forcing a new sign-in at startup with a personal client ID.
+
 - Start `Ctrl+F` and `/` searches across Spotify; press again to search the
   current area.
 - Cancel obsolete search pages, reuse pending searches and cached categories,

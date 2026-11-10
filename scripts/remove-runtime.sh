@@ -17,6 +17,7 @@ state_root=${XDG_STATE_HOME:-"$HOME/.local/state"}
 session_runtime_root=${XDG_RUNTIME_DIR:-/tmp}
 backend_unit_file="$config_root/systemd/user/omarchy-spotify.service"
 fallback_unit_file="$config_root/systemd/user/omarchy-spotifyd.service"
+soloist_unit_file="$config_root/systemd/user/omarchy-spotify-soloist.service"
 config_dir="$config_root/omarchy-spotify"
 cache_dir="$cache_root/spotifyd"
 build_cache_dir="$cache_root/omarchy-spotify"
@@ -47,13 +48,17 @@ if [[ ${runtime_dir##*/} == omarchy-spotify ]]; then
   runtime_dir_is_dedicated=1
 fi
 
-for unit_name in omarchy-spotify.service omarchy-spotifyd.service; do
+for unit_name in omarchy-spotify.service omarchy-spotifyd.service \
+    omarchy-spotify-soloist.service; do
   systemctl --user disable --now "$unit_name" >/dev/null 2>&1 || true
 done
-rm -f -- "$backend_unit_file" "$fallback_unit_file" "$backend_binary" \
+rm -f -- "$backend_unit_file" "$fallback_unit_file" "$soloist_unit_file" \
+  "$runtime_dir/run-soloist.sh" "$runtime_dir/soloist/soloist" "$backend_binary" \
   "$backend_source_id_file" "$backend_binary_hash_file" "$backend_origin_file"
 systemctl --user daemon-reload
+rmdir -- "$runtime_dir/soloist" 2>/dev/null || true
 systemctl --user reset-failed omarchy-spotify.service omarchy-spotifyd.service \
+  omarchy-spotify-soloist.service \
   >/dev/null 2>&1 || true
 
 if [[ -d $config_dir ]]; then

@@ -4184,7 +4184,10 @@ Item {
   BackendClient {
     id: backendClient
     wanted: daemonManager.running && !daemonManager.usingFallbackRuntime
+    // Spotify refuses audio keys to open-source players for many accounts.
+    // Point at the supported way out instead of leaving a dead end.
     onErrorCodeChanged: if (errorCode === "audio_key_unavailable")
-      root.fail(errorMessage || "Spotify could not play this track on this computer")
+      root.fail((errorMessage || "Spotify could not play this track on this computer")
+        + " To play here, set up Spotify's official player: scripts/setup-soloist.sh (see README).")
   }
 }
